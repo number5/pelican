@@ -137,6 +137,7 @@ def wp2fields(xml, wp_custpost=False):
 
             filename = item.find('post_name').string
             post_id = item.find('post_id').string
+            link = item.find('link').string
             filename = get_filename(filename, post_id)
 
             content = item.find('encoded').string
@@ -168,7 +169,7 @@ def wp2fields(xml, wp_custpost=False):
                 else:
                     kind = post_type
             yield (title, content, filename, date, author, categories, tags, status,
-                   kind, "wp-html")
+                   kind, "wp-html", post_id, link)
 
 def dc2fields(file):
     """Opens a Dotclear export file, and yield pelican fields"""
@@ -476,7 +477,7 @@ def build_header(title, date, author, categories, tags, slug, status=None, attac
     return header
 
 def build_markdown_header(title, date, author, categories, tags, slug, status=None,
-    attachments=None):
+    attachments=None, post_id=None, link=None):
     """Build a header from a list of fields"""
     header = 'Title: %s\n' % title
     if date:
@@ -491,6 +492,10 @@ def build_markdown_header(title, date, author, categories, tags, slug, status=No
         header += 'Slug: %s\n' % slug
     if status:
         header += 'Status: %s\n' % status
+    if post_id:
+        header += 'Wordpress-Id: %s\n' % post_id
+    if link:
+        header += 'Link: %s\n' % link
     if attachments:
         header += 'Attachments: %s\n' % ', '.join(attachments)
     header += '\n'
@@ -618,10 +623,10 @@ def fields2pelican(fields, out_markup, output_path,
         dirpage=False, filename_template=None, filter_author=None,
         wp_custpost=False, wp_attach=False, attachments=None):
     for (title, content, filename, date, author, categories, tags, status,
-            kind, in_markup) in fields:
+            kind, in_markup, post_id, link) in fields:
         if filter_author and filter_author != author:
             continue
-        slug = not disable_slugs and filename or None
+        slug = not disable_slugs and post_id or None
 
         if wp_attach and attachments:
             try:
@@ -635,7 +640,7 @@ def fields2pelican(fields, out_markup, output_path,
         ext = get_ext(out_markup, in_markup)
         if ext == '.md':
             header = build_markdown_header(title, date, author, categories,
-                    tags, slug, status, attached_files)
+                    tags, slug, status, attached_files, post_id, link)
         else:
             out_markup = "rst"
             header = build_header(title, date, author, categories,
