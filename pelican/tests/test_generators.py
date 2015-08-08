@@ -6,7 +6,10 @@ from codecs import open
 try:
     from unittest.mock import MagicMock
 except ImportError:
-    from mock import MagicMock
+    try:
+        from mock import MagicMock
+    except ImportError:
+        MagicMock = False
 from shutil import rmtree
 from tempfile import mkdtemp
 
@@ -112,6 +115,7 @@ class TestArticlesGenerator(unittest.TestCase):
         return [[article.title, article.status, article.category.name,
                  article.template] for article in articles]
 
+    @unittest.skipUnless(MagicMock, 'Needs Mock module')
     def test_generate_feeds(self):
         settings = get_settings()
         settings['CACHE_PATH'] = self.temp_cache
@@ -131,7 +135,6 @@ class TestArticlesGenerator(unittest.TestCase):
         self.assertFalse(writer.write_feed.called)
 
     def test_generate_context(self):
-
         articles_expected = [
             ['Article title', 'published', 'Default', 'article'],
             ['Article with markdown and summary metadata multi', 'published',
@@ -158,6 +161,8 @@ class TestArticlesGenerator(unittest.TestCase):
              'article'],
             ['This is an article with multiple authors!', 'published', 'Default', 'article'],
             ['This is an article with multiple authors!', 'published', 'Default', 'article'],
+            ['This is an article with multiple authors in list format!', 'published', 'Default', 'article'],
+            ['This is an article with multiple authors in lastname, firstname format!', 'published', 'Default', 'article'],
             ['This is an article without category !', 'published', 'Default',
              'article'],
             ['This is an article without category !', 'published',
@@ -170,7 +175,6 @@ class TestArticlesGenerator(unittest.TestCase):
         self.assertEqual(sorted(articles_expected), sorted(self.articles))
 
     def test_generate_categories(self):
-
         # test for name
         # categories are grouped by slug; if two categories have the same slug
         # but different names they will be grouped together, the first one in
@@ -188,7 +192,6 @@ class TestArticlesGenerator(unittest.TestCase):
         self.assertEqual(sorted(categories), sorted(categories_expected))
 
     def test_do_not_use_folder_as_category(self):
-
         settings = get_settings(filenames={})
         settings['DEFAULT_CATEGORY'] = 'Default'
         settings['DEFAULT_DATE'] = (1970, 1, 1)
@@ -215,6 +218,7 @@ class TestArticlesGenerator(unittest.TestCase):
         categories_expected = ['default', 'yeah', 'test', 'zhi-dao-shu']
         self.assertEqual(sorted(categories), sorted(categories_expected))
 
+    @unittest.skipUnless(MagicMock, 'Needs Mock module')
     def test_direct_templates_save_as_default(self):
 
         settings = get_settings(filenames={})
@@ -228,6 +232,7 @@ class TestArticlesGenerator(unittest.TestCase):
                                  generator.get_template("archives"), settings,
                                  blog=True, paginated={}, page_name='archives')
 
+    @unittest.skipUnless(MagicMock, 'Needs Mock module')
     def test_direct_templates_save_as_modified(self):
 
         settings = get_settings()
@@ -244,6 +249,7 @@ class TestArticlesGenerator(unittest.TestCase):
                                  blog=True, paginated={},
                                  page_name='archives/index')
 
+    @unittest.skipUnless(MagicMock, 'Needs Mock module')
     def test_direct_templates_save_as_false(self):
 
         settings = get_settings()
@@ -268,6 +274,7 @@ class TestArticlesGenerator(unittest.TestCase):
         self.assertIn(custom_template, self.articles)
         self.assertIn(standard_template, self.articles)
 
+    @unittest.skipUnless(MagicMock, 'Needs Mock module')
     def test_period_in_timeperiod_archive(self):
         """
         Test that the context of a generated period_archive is passed
@@ -340,78 +347,12 @@ class TestArticlesGenerator(unittest.TestCase):
     def test_generate_authors(self):
         """Check authors generation."""
         authors = [author.name for author, _ in self.generator.authors]
-        authors_expected = sorted(['Alexis Métaireau', 'First Author', 'Second Author'])
+        authors_expected = sorted(['Alexis Métaireau', 'Author, First', 'Author, Second', 'First Author', 'Second Author'])
         self.assertEqual(sorted(authors), authors_expected)
         # test for slug
         authors = [author.slug for author, _ in self.generator.authors]
-        authors_expected = ['alexis-metaireau', 'first-author', 'second-author']
+        authors_expected = ['alexis-metaireau', 'author-first', 'author-second', 'first-author', 'second-author']
         self.assertEqual(sorted(authors), sorted(authors_expected))
-
-    def test_article_object_caching(self):
-        """Test Article objects caching at the generator level"""
-        settings = get_settings(filenames={})
-        settings['CACHE_PATH'] = self.temp_cache
-        settings['CONTENT_CACHING_LAYER'] = 'generator'
-        settings['READERS'] = {'asc': None}
-
-        generator = ArticlesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.generate_context()
-        self.assertTrue(hasattr(generator, '_cache'))
-
-        generator = ArticlesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.readers.read_file = MagicMock()
-        generator.generate_context()
-        generator.readers.read_file.assert_called_count == 0
-
-    def test_reader_content_caching(self):
-        """Test raw content caching at the reader level"""
-        settings = get_settings(filenames={})
-        settings['CACHE_PATH'] = self.temp_cache
-        settings['READERS'] = {'asc': None}
-
-        generator = ArticlesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.generate_context()
-        self.assertTrue(hasattr(generator.readers, '_cache'))
-
-        generator = ArticlesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        readers = generator.readers.readers
-        for reader in readers.values():
-            reader.read = MagicMock()
-        generator.generate_context()
-        for reader in readers.values():
-            reader.read.assert_called_count == 0
-
-    def test_ignore_cache(self):
-        """Test that all the articles are read again when not loading cache
-
-        used in --ignore-cache or autoreload mode"""
-        settings = get_settings(filenames={})
-        settings['CACHE_PATH'] = self.temp_cache
-        settings['READERS'] = {'asc': None}
-
-        generator = ArticlesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.readers.read_file = MagicMock()
-        generator.generate_context()
-        self.assertTrue(hasattr(generator, '_cache_open'))
-        orig_call_count = generator.readers.read_file.call_count
-
-        settings['LOAD_CONTENT_CACHE'] = False
-        generator = ArticlesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.readers.read_file = MagicMock()
-        generator.generate_context()
-        generator.readers.read_file.assert_called_count == orig_call_count
 
     def test_standard_metadata_in_default_metadata(self):
         settings = get_settings(filenames={})
@@ -430,6 +371,7 @@ class TestArticlesGenerator(unittest.TestCase):
 
         authors = sorted([author.name for author, _ in generator.authors])
         authors_expected = sorted(['Alexis Métaireau', 'Blogger',
+                                   'Author, First', 'Author, Second',
                                    'First Author', 'Second Author'])
         self.assertEqual(authors, authors_expected)
 
@@ -444,6 +386,65 @@ class TestArticlesGenerator(unittest.TestCase):
         tags_expected = sorted(['bar', 'foo', 'foobar', 'general', 'untagged',
                                 'パイソン', 'マック'])
         self.assertEqual(tags, tags_expected)
+
+    def test_article_order_by(self):
+        settings = get_settings(filenames={})
+        settings['DEFAULT_CATEGORY'] = 'Default'
+        settings['DEFAULT_DATE'] = (1970, 1, 1)
+        settings['CACHE_CONTENT'] = False   # cache not needed for this logic tests
+        settings['ARTICLE_ORDER_BY'] = 'title'
+
+        generator = ArticlesGenerator(
+            context=settings.copy(), settings=settings,
+            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
+        generator.generate_context()
+
+        expected = [
+            'An Article With Code Block To Test Typogrify Ignore',
+            'Article title',
+            'Article with Nonconformant HTML meta tags',
+            'Article with markdown and summary metadata multi',
+            'Article with markdown and summary metadata single',
+            'Article with markdown containing footnotes',
+            'Article with template',
+            'Rst with filename metadata',
+            'Test Markdown extensions',
+            'Test markdown File',
+            'Test md File',
+            'Test mdown File',
+            'Test mkd File',
+            'This is a super article !',
+            'This is a super article !',
+            'This is a super article !',
+            'This is a super article !',
+            'This is a super article !',
+            'This is a super article !',
+            'This is an article with category !',
+            'This is an article with multiple authors in lastname, firstname format!',
+            'This is an article with multiple authors in list format!',
+            'This is an article with multiple authors!',
+            'This is an article with multiple authors!',
+            'This is an article without category !',
+            'This is an article without category !',
+            'マックOS X 10.8でパイソンとVirtualenvをインストールと設定']
+
+        articles = [article.title for article in generator.articles]
+        self.assertEqual(articles, expected)
+
+        # reversed title
+        settings = get_settings(filenames={})
+        settings['DEFAULT_CATEGORY'] = 'Default'
+        settings['DEFAULT_DATE'] = (1970, 1, 1)
+        settings['CACHE_CONTENT'] = False   # cache not needed for this logic tests
+        settings['ARTICLE_ORDER_BY'] = 'reversed-title'
+
+        generator = ArticlesGenerator(
+            context=settings.copy(), settings=settings,
+            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
+        generator.generate_context()
+
+        articles = [article.title for article in generator.articles]
+        self.assertEqual(articles, list(reversed(expected)))
 
 
 class TestPageGenerator(unittest.TestCase):
@@ -490,73 +491,13 @@ class TestPageGenerator(unittest.TestCase):
         ]
 
         self.assertEqual(sorted(pages_expected), sorted(pages))
+        self.assertEqual(
+            sorted(pages_expected),
+            sorted(self.distill_pages(generator.context['pages'])))
         self.assertEqual(sorted(hidden_pages_expected), sorted(hidden_pages))
-
-    def test_page_object_caching(self):
-        """Test Page objects caching at the generator level"""
-        settings = get_settings(filenames={})
-        settings['CACHE_PATH'] = self.temp_cache
-        settings['CONTENT_CACHING_LAYER'] = 'generator'
-        settings['READERS'] = {'asc': None}
-
-        generator = PagesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.generate_context()
-        self.assertTrue(hasattr(generator, '_cache'))
-
-        generator = PagesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.readers.read_file = MagicMock()
-        generator.generate_context()
-        generator.readers.read_file.assert_called_count == 0
-
-    def test_reader_content_caching(self):
-        """Test raw content caching at the reader level"""
-        settings = get_settings(filenames={})
-        settings['CACHE_PATH'] = self.temp_cache
-        settings['READERS'] = {'asc': None}
-
-        generator = PagesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.generate_context()
-        self.assertTrue(hasattr(generator.readers, '_cache'))
-
-        generator = PagesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        readers = generator.readers.readers
-        for reader in readers.values():
-            reader.read = MagicMock()
-        generator.generate_context()
-        for reader in readers.values():
-            reader.read.assert_called_count == 0
-
-    def test_ignore_cache(self):
-        """Test that all the pages are read again when not loading cache
-
-        used in --ignore_cache or autoreload mode"""
-        settings = get_settings(filenames={})
-        settings['CACHE_PATH'] = self.temp_cache
-        settings['READERS'] = {'asc': None}
-
-        generator = PagesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.readers.read_file = MagicMock()
-        generator.generate_context()
-        self.assertTrue(hasattr(generator, '_cache_open'))
-        orig_call_count = generator.readers.read_file.call_count
-
-        settings['LOAD_CONTENT_CACHE'] = False
-        generator = PagesGenerator(
-            context=settings.copy(), settings=settings,
-            path=CONTENT_DIR, theme=settings['THEME'], output_path=None)
-        generator.readers.read_file = MagicMock()
-        generator.generate_context()
-        generator.readers.read_file.assert_called_count == orig_call_count
+        self.assertEqual(
+            sorted(hidden_pages_expected),
+            sorted(self.distill_pages(generator.context['hidden_pages'])))
 
     def test_generate_sorted(self):
         settings = get_settings(filenames={})
@@ -590,6 +531,23 @@ class TestPageGenerator(unittest.TestCase):
              'custom'],
         ]
         settings['PAGE_ORDER_BY'] = 'title'
+        generator = PagesGenerator(
+            context=settings.copy(), settings=settings,
+            path=CUR_DIR, theme=settings['THEME'], output_path=None)
+        generator.generate_context()
+        pages = self.distill_pages(generator.pages)
+        self.assertEqual(pages_expected_sorted_by_title, pages)
+
+        # sort by title reversed
+        pages_expected_sorted_by_title = [
+            ['This is a test page with a preset template', 'published',
+             'custom'],
+            ['This is a test page', 'published', 'page'],
+            ['This is a markdown test page', 'published', 'page'],
+            ['Page with a bunch of links', 'published', 'page'],
+            ['A Page (Test) for sorting', 'published', 'page'],
+        ]
+        settings['PAGE_ORDER_BY'] = 'reversed-title'
         generator = PagesGenerator(
             context=settings.copy(), settings=settings,
             path=CUR_DIR, theme=settings['THEME'], output_path=None)

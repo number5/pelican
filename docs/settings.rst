@@ -108,9 +108,10 @@ Setting name (followed by default value, if any)                                
                                                                                  process or ignore. For example, to avoid processing .html files,
                                                                                  set: ``READERS = {'html': None}``. To add a custom reader for the
                                                                                  ``foo`` extension, set: ``READERS = {'foo': FooReader}``
-``IGNORE_FILES = ['.#*']``                                                       A list of file globbing patterns to match against the
-                                                                                 source files to be ignored by the processor. For example,
-                                                                                 the default ``['.#*']`` will ignore emacs lock files.
+``IGNORE_FILES = ['.#*']``                                                       A list of glob patterns.  Files and directories matching any
+                                                                                 of these patterns will be ignored by the processor. For example,
+                                                                                 the default ``['.#*']`` will ignore emacs lock files, and
+                                                                                 ``['__pycache__']`` would ignore Python 3's bytecode caches.
 ``MD_EXTENSIONS =`` ``['codehilite(css_class=highlight)','extra']``              A list of the extensions that the Markdown processor
                                                                                  will use. Refer to the Python Markdown documentation's
                                                                                  `Extensions section <http://pythonhosted.org/Markdown/extensions/>`_
@@ -159,7 +160,12 @@ Setting name (followed by default value, if any)                                
                                                                                  Pelican's default settings include the "images" directory here.
 ``STATIC_EXCLUDES = []``                                                         A list of directories to exclude when looking for static files.
 ``STATIC_EXCLUDE_SOURCES = True``                                                If set to False, content source files will not be skipped when
-                                                                                 copying files found in ``STATIC_PATHS``.
+                                                                                 copying files found in ``STATIC_PATHS``. This setting is for
+                                                                                 backward compatibility with Pelican releases before version 3.5.
+                                                                                 It has no effect unless ``STATIC_PATHS`` contains a directory that
+                                                                                 is also in ``ARTICLE_PATHS`` or ``PAGE_PATHS``. If you are trying
+                                                                                 to publish your site's source files, consider using the
+                                                                                 ``OUTPUT_SOURCES`` setting instead.
 ``TIMEZONE``                                                                     The timezone used in the date information, to
                                                                                  generate Atom and RSS feeds. See the *Timezone*
                                                                                  section below for more info.
@@ -199,7 +205,7 @@ Setting name (followed by default value, if any)                                
 ``SLUGIFY_SOURCE = 'title'``                                                     Specifies where you want the slug to be automatically generated
                                                                                  from. Can be set to ``title`` to use the 'Title:' metadata tag or
                                                                                  ``basename`` to use the article's file name when creating the slug.
-``CACHE_CONTENT = True``                                                         If ``True``, save content in a cache file.
+``CACHE_CONTENT = False``                                                        If ``True``, saves content in caches.
                                                                                  See :ref:`reading_only_modified_content` for details about caching.
 ``CONTENT_CACHING_LAYER = 'reader'``                                             If set to ``'reader'``, save only the raw content and metadata
                                                                                  returned by readers. If set to ``'generator'``, save processed
@@ -207,9 +213,7 @@ Setting name (followed by default value, if any)                                
 ``CACHE_PATH = 'cache'``                                                         Directory in which to store cache files.
 ``GZIP_CACHE = True``                                                            If ``True``, use gzip to (de)compress the cache files.
 ``CHECK_MODIFIED_METHOD = 'mtime'``                                              Controls how files are checked for modifications.
-``LOAD_CONTENT_CACHE = True``                                                    If ``True``, load unmodified content from cache.
-``AUTORELOAD_IGNORE_CACHE = False``                                              If ``True``, do not load content cache in autoreload mode
-                                                                                 when the settings file changes.
+``LOAD_CONTENT_CACHE = False``                                                   If ``True``, load unmodified content from caches.
 ``WRITE_SELECTED = []``                                                          If this list is not empty, **only** output files with their paths
                                                                                  in this list are written. Paths should be either absolute or relative
                                                                                  to the current Pelican working directory. For possible use cases see
@@ -273,14 +277,6 @@ Setting name (followed by default value, if any)        What does it do?
 ======================================================  ==============================================================
 ``ARTICLE_URL = '{slug}.html'``                         The URL to refer to an article.
 ``ARTICLE_SAVE_AS = '{slug}.html'``                     The place where we will save an article.
-``ARTICLE_ORDER_BY = 'slug'``                           The metadata attribute used to sort articles. By default,
-                                                        the ``articles_page.object_list`` template variable is
-                                                        ordered by slug. If you modify this, make sure all
-                                                        articles contain the attribute you specify. You can also
-                                                        specify a "sorting" function of one argument that is used
-                                                        to extract a comparison key from each article. For example,
-                                                        sorting by title without using the built-in functionality
-                                                        would use the function ``operator.attrgetter('title')``.
 ``ARTICLE_LANG_URL = '{slug}-{lang}.html'``             The URL to refer to an article which doesn't use the
                                                         default language.
 ``ARTICLE_LANG_SAVE_AS = '{slug}-{lang}.html'``         The place where we will save an article which
@@ -295,17 +291,6 @@ Setting name (followed by default value, if any)        What does it do?
 ``PAGE_SAVE_AS = 'pages/{slug}.html'``                  The location we will save the page. This value has to be
                                                         the same as PAGE_URL or you need to use a rewrite in
                                                         your server config.
-
-``PAGE_ORDER_BY = 'basename'``                          The metadata attribute used to sort pages. By default
-                                                        the ``PAGES`` template variable is ordered by basename
-                                                        (i.e., path not included). Note that the option ``'basename'``
-                                                        is a special option supported in the source code. If
-                                                        you modify this setting, make sure all pages contain
-                                                        the attribute you specify. You can also specify a "sorting"
-                                                        function of one argument that is used to extract a comparison
-                                                        key from each page. For example, the basename function looks
-                                                        similar to
-                                                        ``lambda x: os.path.basename(getattr(x, 'source_path', ''))``.
 ``PAGE_LANG_URL = 'pages/{slug}-{lang}.html'``          The URL we will use to link to a page which doesn't
                                                         use the default language.
 ``PAGE_LANG_SAVE_AS = 'pages/{slug}-{lang}.html'``      The location we will save the page which doesn't
@@ -620,53 +605,6 @@ This would cause the first page to be written to
 ``page/{number}`` directories.
 
 
-Tag cloud
-=========
-
-If you want to generate a tag cloud with all your tags, you can do so using the
-following settings.
-
-================================================    =====================================================
-Setting name (followed by default value)            What does it do?
-================================================    =====================================================
-``TAG_CLOUD_STEPS = 4``                             Count of different font sizes in the tag
-                                                    cloud.
-``TAG_CLOUD_MAX_ITEMS = 100``                       Maximum number of tags in the cloud.
-================================================    =====================================================
-
-The default theme does not include a tag cloud, but it is pretty easy to add one::
-
-    <ul class="tagcloud">
-        {% for tag in tag_cloud %}
-            <li class="tag-{{ tag.1 }}"><a href="{{ SITEURL }}/{{ tag.0.url }}">{{ tag.0 }}</a></li>
-        {% endfor %}
-    </ul>
-
-You should then also define CSS styles with appropriate classes (tag-1 to tag-N,
-where N matches ``TAG_CLOUD_STEPS``), tag-1 being the most frequent, and
-define a ``ul.tagcloud`` class with appropriate list-style to create the cloud.
-For example::
-
-    ul.tagcloud {
-      list-style: none;
-        padding: 0;
-    }
-
-    ul.tagcloud li {
-        display: inline-block;
-    }
-
-    li.tag-1 {
-        font-size: 150%;
-    }
-
-    li.tag-2 {
-        font-size: 120%;
-    }
-
-    ...
-
-
 Translations
 ============
 
@@ -687,14 +625,26 @@ Setting name (followed by default value, if any)            What does it do?
 Ordering content
 ================
 
-================================================    =====================================================
+================================================    ==============================================================
 Setting name (followed by default value)            What does it do?
-================================================    =====================================================
+================================================    ==============================================================
 ``NEWEST_FIRST_ARCHIVES = True``                    Order archives by newest first by date. (False:
                                                     orders by date with older articles first.)
 ``REVERSE_CATEGORY_ORDER = False``                  Reverse the category order. (True: lists by reverse
                                                     alphabetical order; default lists alphabetically.)
-================================================    =====================================================
+``ARTICLE_ORDER_BY = 'reversed-date'``              Defines how the articles (``articles_page.object_list`` in
+                                                    the template) are sorted. Valid options are: metadata as a
+                                                    string (use ``reversed-`` prefix the reverse the sort order),
+                                                    special option ``'basename'`` which will use the basename of
+                                                    the file (without path) or a custom function to extract the
+                                                    sorting key from articles. The default value,
+                                                    ``'reversed-date'``, will sort articles by date in reverse
+                                                    order (i.e. newest article comes first).
+``PAGE_ORDER_BY = 'basename'``                      Defines how the pages (``PAGES`` variable in the template)
+                                                    are sorted. Options are same as ``ARTICLE_ORDER_BY``.
+                                                    The default value, ``'basename'`` will sort pages by their
+                                                    basename.
+================================================    ==============================================================
 
 
 Themes

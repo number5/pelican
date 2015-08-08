@@ -1,7 +1,9 @@
-import os
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
+
 import functools
 import logging
-
+import os
 import six
 
 from pelican.utils import (slugify, python_2_unicode_compatible)
@@ -13,12 +15,10 @@ logger = logging.getLogger(__name__)
 @functools.total_ordering
 class URLWrapper(object):
     def __init__(self, name, settings):
-        # next 2 lines are redundant with the setter of the name property
-        # but are here for clarity
         self.settings = settings
         self._name = name
-        self.slug = slugify(name, self.settings.get('SLUG_SUBSTITUTIONS', ()))
-        self.name = name
+        self._slug = None
+        self._slug_from_name = True
 
     @property
     def name(self):
@@ -27,37 +27,63 @@ class URLWrapper(object):
     @name.setter
     def name(self, name):
         self._name = name
-        self.slug = slugify(name, self.settings.get('SLUG_SUBSTITUTIONS', ()))
+        # if slug wasn't explicitly set, it needs to be regenerated from name
+        # so, changing name should reset slug for slugification
+        if self._slug_from_name:
+            self._slug = None
+
+    @property
+    def slug(self):
+        if self._slug is None:
+            self._slug = slugify(self.name,
+                                 self.settings.get('SLUG_SUBSTITUTIONS', ()))
+        return self._slug
+
+    @slug.setter
+    def slug(self, slug):
+        # if slug is expliticly set, changing name won't alter slug
+        self._slug_from_name = False
+        self._slug = slug
 
     def as_dict(self):
         d = self.__dict__
         d['name'] = self.name
+        d['slug'] = self.slug
         return d
 
     def __hash__(self):
         return hash(self.slug)
-
-    def _key(self):
-        return self.slug
 
     def _normalize_key(self, key):
         subs = self.settings.get('SLUG_SUBSTITUTIONS', ())
         return six.text_type(slugify(key, subs))
 
     def __eq__(self, other):
-        return self._key() == self._normalize_key(other)
+        if isinstance(other, self.__class__):
+            return self.slug == other.slug
+        if isinstance(other, six.text_type):
+            return self.slug == self._normalize_key(other)
+        return False
 
     def __ne__(self, other):
-        return self._key() != self._normalize_key(other)
+        if isinstance(other, self.__class__):
+            return self.slug != other.slug
+        if isinstance(other, six.text_type):
+            return self.slug != self._normalize_key(other)
+        return True
 
     def __lt__(self, other):
-        return self._key() < self._normalize_key(other)
+        if isinstance(other, self.__class__):
+            return self.slug < other.slug
+        if isinstance(other, six.text_type):
+            return self.slug < self._normalize_key(other)
+        return False
 
     def __str__(self):
         return self.name
 
     def __repr__(self):
-        return '<{} {}>'.format(type(self).__name__, str(self))
+        return '<{} {}>'.format(type(self).__name__, repr(self._name))
 
     def _from_settings(self, key, get_page_name=False):
         """Returns URL information as defined in settings.

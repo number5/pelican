@@ -22,10 +22,11 @@ from pelican.generators import (ArticlesGenerator, PagesGenerator,
                                 TemplatePagesGenerator)
 from pelican.readers import Readers
 from pelican.settings import read_settings
-from pelican.utils import clean_output_dir, folder_watcher, file_watcher
+from pelican.utils import (clean_output_dir, folder_watcher,
+                           file_watcher, maybe_pluralize)
 from pelican.writers import Writer
 
-__version__ = "3.5.0"
+__version__ = "3.6.3.dev"
 
 DEFAULT_CONFIG_NAME = 'pelicanconf.py'
 
@@ -100,6 +101,11 @@ class Pelican(object):
             for setting in ('ARTICLE_URL', 'ARTICLE_LANG_URL', 'PAGE_URL',
                             'PAGE_LANG_URL'):
                 logger.warning("%s = '%s'", setting, self.settings[setting])
+
+        if self.settings.get('AUTORELOAD_IGNORE_CACHE'):
+            logger.warning('Found deprecated `AUTORELOAD_IGNORE_CACHE` in '
+                           'settings. Use --ignore-cache instead.')
+            self.settings.pop('AUTORELOAD_IGNORE_CACHE')
 
         if self.settings.get('ARTICLE_PERMALINK_STRUCTURE', False):
             logger.warning('Found deprecated `ARTICLE_PERMALINK_STRUCTURE` in'
@@ -183,12 +189,32 @@ class Pelican(object):
         pages_generator = next(g for g in generators
                                if isinstance(g, PagesGenerator))
 
-        print('Done: Processed {} article(s), {} draft(s) and {} page(s) in ' \
-              '{:.2f} seconds.'.format(
-            len(articles_generator.articles) + len(articles_generator.translations),
-            len(articles_generator.drafts) + \
-            len(articles_generator.drafts_translations),
-            len(pages_generator.pages) + len(pages_generator.translations),
+        pluralized_articles = maybe_pluralize(
+            len(articles_generator.articles) +
+                len(articles_generator.translations),
+            'article',
+            'articles')
+        pluralized_drafts = maybe_pluralize(
+            len(articles_generator.drafts) +
+                len(articles_generator.drafts_translations),
+            'draft',
+            'drafts')
+        pluralized_pages = maybe_pluralize(
+            len(pages_generator.pages) +
+                len(pages_generator.translations),
+            'page',
+            'pages')
+        pluralized_hidden_pages = maybe_pluralize(
+            len(pages_generator.hidden_pages) +
+                len(pages_generator.hidden_translations),
+            'hidden page',
+            'hidden pages')
+
+        print('Done: Processed {}, {}, {} and {} in {:.2f} seconds.'.format(
+            pluralized_articles,
+            pluralized_drafts,
+            pluralized_pages,
+            pluralized_hidden_pages,
             time.time() - start_time))
 
     def get_generator_classes(self):
@@ -381,10 +407,6 @@ def main():
             print('  --- AutoReload Mode: Monitoring `content`, `theme` and'
                   ' `settings` for changes. ---')
 
-            def _ignore_cache(pelican_obj):
-                if pelican_obj.settings['AUTORELOAD_IGNORE_CACHE']:
-                    pelican_obj.settings['LOAD_CONTENT_CACHE'] = False
-
             while True:
                 try:
                     # Check source dir for changed files ending with the given
@@ -393,12 +415,9 @@ def main():
                     # have changed, no matter what extension the filenames
                     # have.
                     modified = {k: next(v) for k, v in watchers.items()}
-                    original_load_cache = settings['LOAD_CONTENT_CACHE']
 
                     if modified['settings']:
                         pelican, settings = get_instance(args)
-                        original_load_cache = settings['LOAD_CONTENT_CACHE']
-                        _ignore_cache(pelican)
 
                         # Adjust static watchers if there are any changes
                         new_static = settings.get("STATIC_PATHS", [])
@@ -435,8 +454,6 @@ def main():
                                            'theme.')
 
                         pelican.run()
-                        # restore original caching policy
-                        pelican.settings['LOAD_CONTENT_CACHE'] = original_load_cache
 
                 except KeyboardInterrupt:
                     logger.warning("Keyboard interrupt, quitting.")
@@ -444,7 +461,6 @@ def main():
 
                 except Exception as e:
                     if (args.verbosity == logging.DEBUG):
-                        logger.critical(e.args)
                         raise
                     logger.warning(
                         'Caught exception "%s". Reloading.', e)

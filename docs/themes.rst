@@ -47,6 +47,8 @@ To make your own theme, you must follow the following structure::
   if it helps you keep things organized while creating your theme.
 
 
+.. _templates-variables:
+
 Templates and variables
 =======================
 
@@ -77,11 +79,13 @@ articles        The list of articles, ordered descending by date.
                 in the `all_articles` variable.
 dates           The same list of articles, but ordered by date,
                 ascending.
+drafts          The list of draft articles
 tags            A list of (tag, articles) tuples, containing all
                 the tags.
 categories      A list of (category, articles) tuples, containing
                 all the categories and corresponding articles (values)
 pages           The list of pages
+hidden_pages    The list of hidden pages
 =============   ===================================================
 
 
@@ -359,7 +363,7 @@ default_template        Default template name.
 in_default_lang         Boolean representing if the article is written
                         in the default language.
 lang                    Language of the article.
-locale_date             Date formated by the `date_format`.
+locale_date             Date formatted by the `date_format`.
 metadata                Article header metadata `dict`.
 save_as                 Location to save the article page.
 slug                    Page slug.
@@ -414,7 +418,7 @@ default_template        Default template name.
 in_default_lang         Boolean representing if the article is written
                         in the default language.
 lang                    Language of the article.
-locale_date             Date formated by the `date_format`.
+locale_date             Date formatted by the `date_format`.
 metadata                Page header metadata `dict`.
 save_as                 Location to save the page.
 slug                    Page slug.

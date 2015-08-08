@@ -29,12 +29,10 @@ class ReaderTest(unittest.TestCase):
                 self.assertEqual(
                     value,
                     real_value,
-                    str('Expected %r to have value %r, but was %r')
-                        % (key, value, real_value))
+                    'Expected %s to have value %s, but was %s' % (key, value, real_value))
             else:
                 self.fail(
-                    str('Expected %r to have value %r, but was not in Dict')
-                        % (key, value))
+                   'Expected %s to have value %s, but was not in Dict' % (key, value))
 
 class TestAssertDictHasSubset(ReaderTest):
     def setUp(self):
@@ -324,6 +322,23 @@ class RstReaderTest(ReaderTest):
 
         self.assertDictHasSubset(page.metadata, expected)
 
+    def test_article_with_multiple_authors_semicolon(self):
+        page = self.read_file(
+            path='article_with_multiple_authors_semicolon.rst')
+        expected = {
+            'authors': ['Author, First', 'Author, Second']
+        }
+
+        self.assertDictHasSubset(page.metadata, expected)
+
+    def test_article_with_multiple_authors_list(self):
+        page = self.read_file(path='article_with_multiple_authors_list.rst')
+        expected = {
+            'authors': ['Author, First', 'Author, Second']
+        }
+
+        self.assertDictHasSubset(page.metadata, expected)
+
 @unittest.skipUnless(readers.Markdown, "markdown isn't installed")
 class MdReaderTest(ReaderTest):
 
@@ -549,9 +564,12 @@ class HTMLReaderTest(ReaderTest):
     def test_article_metadata_key_lowercase(self):
         # Keys of metadata should be lowercase.
         page = self.read_file(path='article_with_uppercase_metadata.html')
+
+        # Key should be lowercase
         self.assertIn('category', page.metadata, 'Key should be lowercase.')
-        self.assertEqual('Yeah', page.metadata.get('category'),
-                         'Value keeps cases.')
+
+        # Value should keep cases
+        self.assertEqual('Yeah', page.metadata.get('category'))
 
     def test_article_with_nonconformant_meta_tags(self):
         page = self.read_file(path='article_with_nonconformant_meta_tags.html')

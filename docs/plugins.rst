@@ -108,36 +108,18 @@ page_generator_preread              page_generator                 invoked befor
                                                                    use if code needs to do something before every page is parsed.
 page_generator_init                 page_generator                 invoked in the PagesGenerator.__init__
 page_generator_finalized            page_generator                 invoked at the end of PagesGenerator.generate_context
+page_writer_finalized               page_generator, writer         invoked after all pages have been written, but before the page generator
+                                                                   is closed.
 static_generator_context            static_generator, metadata
 static_generator_preread            static_generator               invoked before a static file is read in StaticGenerator.generate_context;
                                                                    use if code needs to do something before every static file is added to the
                                                                    staticfiles list.
 static_generator_init               static_generator               invoked in the StaticGenerator.__init__
 static_generator_finalized          static_generator               invoked at the end of StaticGenerator.generate_context
-content_object_init                 content_object                 invoked at the end of Content.__init__ (see note below)
+content_object_init                 content_object                 invoked at the end of Content.__init__
 content_written                     path, context                  invoked each time a content file is written.
 feed_written                        path, context, feed            invoked each time a feed file is written.
 =================================   ============================   ===========================================================================
-
-The list is currently small, so don't hesitate to add signals and make a pull
-request if you need them!
-
-.. note::
-
-   The signal ``content_object_init`` can send a different type of object as
-   the argument. If you want to register only one type of object then you will
-   need to specify the sender when you are connecting to the signal.
-
-   ::
-
-       from pelican import signals
-       from pelican import contents
-
-       def test(sender, instance):
-               print "%s : %s content initialized !!" % (sender, instance)
-
-       def register():
-               signals.content_object_init.connect(test, sender=contents.Article)
 
 .. warning::
 

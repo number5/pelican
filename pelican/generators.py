@@ -3,8 +3,6 @@ from __future__ import unicode_literals, print_function
 
 import os
 import six
-import math
-import random
 import logging
 import shutil
 import fnmatch
@@ -14,20 +12,24 @@ from codecs import open
 from collections import defaultdict
 from functools import partial
 from itertools import chain, groupby
-from operator import attrgetter, itemgetter
+from operator import attrgetter
 
 from jinja2 import (Environment, FileSystemLoader, PrefixLoader, ChoiceLoader,
                     BaseLoader, TemplateNotFound)
 
+from pelican.cache import FileStampDataCacher
 from pelican.contents import Article, Draft, Page, Static, is_valid_content
 from pelican.readers import Readers
 from pelican.utils import (copy, process_translations, mkdir_p, DateFormatter,
-                           FileStampDataCacher, python_2_unicode_compatible)
+                           python_2_unicode_compatible, posixize_path)
 from pelican import signals
 
 
 logger = logging.getLogger(__name__)
 
+
+class PelicanTemplateNotFound(Exception):
+    pass
 
 @python_2_unicode_compatible
 class Generator(object):
@@ -88,7 +90,7 @@ class Generator(object):
             try:
                 self._templates[name] = self.env.get_template(name + '.html')
             except TemplateNotFound:
-                raise Exception('[templates] unable to load %s.html from %s'
+                raise PelicanTemplateNotFound('[templates] unable to load %s.html from %s'
                                 % (name, self._templates_path))
         return self._templates[name]
 
@@ -130,15 +132,23 @@ class Generator(object):
             exclusions_by_dirpath.setdefault(parent_path, set()).add(subdir)
 
         files = []
+        ignores = self.settings['IGNORE_FILES']
         for path in paths:
             # careful: os.path.join() will add a slash when path == ''.
             root = os.path.join(self.path, path) if path else self.path
 
             if os.path.isdir(root):
                 for dirpath, dirs, temp_files in os.walk(root, followlinks=True):
-                    for e in exclusions_by_dirpath.get(dirpath, ()):
-                        if e in dirs:
-                            dirs.remove(e)
+                    drop = []
+                    excl = exclusions_by_dirpath.get(dirpath, ())
+                    for d in dirs:
+                        if (d in excl or
+                            any(fnmatch.fnmatch(d, ignore)
+                                for ignore in ignores)):
+                            drop.append(d)
+                    for d in drop:
+                        dirs.remove(d)
+
                     reldir = os.path.relpath(dirpath, self.path)
                     for f in temp_files:
                         fp = os.path.join(reldir, f)
@@ -160,7 +170,7 @@ class Generator(object):
         (For example, one that was missing mandatory metadata.)
         The path argument is expected to be relative to self.path.
         """
-        self.context['filenames'][os.path.normpath(path)] = None
+        self.context['filenames'][posixize_path(os.path.normpath(path))] = None
 
     def _is_potential_source_path(self, path):
         """Return True if path was supposed to be used as a source file.
@@ -168,7 +178,7 @@ class Generator(object):
         before this method is called, even if they failed to process.)
         The path argument is expected to be relative to self.path.
         """
-        return os.path.normpath(path) in self.context['filenames']
+        return posixize_path(os.path.normpath(path)) in self.context['filenames']
 
     def _update_context(self, items):
         """Update the context with the given items from the currrent
@@ -357,7 +367,7 @@ class ArticlesGenerator(CachingGenerator):
         """Generate per-year, per-month, and per-day archives."""
         try:
             template = self.get_template('period_archives')
-        except Exception:
+        except PelicanTemplateNotFound:
             template = self.get_template('archives')
 
         period_save_as = {
@@ -491,10 +501,11 @@ class ArticlesGenerator(CachingGenerator):
         for f in self.get_files(
                 self.settings['ARTICLE_PATHS'],
                 exclude=self.settings['ARTICLE_EXCLUDES']):
-            article = self.get_cached_data(f, None)
-            if article is None:
+            article_or_draft = self.get_cached_data(f, None)
+            if article_or_draft is None:
+            #TODO needs overhaul, maybe nomad for read_file solution, unified behaviour
                 try:
-                    article = self.readers.read_file(
+                    article_or_draft = self.readers.read_file(
                         base_path=self.path, path=f, content_class=Article,
                         context=self.context,
                         preread_signal=signals.article_generator_preread,
@@ -507,28 +518,32 @@ class ArticlesGenerator(CachingGenerator):
                     self._add_failed_source_path(f)
                     continue
 
-                if not is_valid_content(article, f):
+                if not is_valid_content(article_or_draft, f):
                     self._add_failed_source_path(f)
                     continue
 
-                self.cache_data(f, article)
+                if article_or_draft.status.lower() == "published":
+                    all_articles.append(article_or_draft)
+                elif article_or_draft.status.lower() == "draft":
+                    article_or_draft = self.readers.read_file(
+                        base_path=self.path, path=f, content_class=Draft,
+                        context=self.context,
+                        preread_signal=signals.article_generator_preread,
+                        preread_sender=self,
+                        context_signal=signals.article_generator_context,
+                        context_sender=self)
+                    self.add_source_path(article_or_draft)
+                    all_drafts.append(article_or_draft)
+                else:
+                    logger.error("Unknown status '%s' for file %s, skipping it.",
+                                   article_or_draft.status, f)
+                    self._add_failed_source_path(f)
+                    continue
 
-            self.add_source_path(article)
+                self.cache_data(f, article_or_draft)
 
-            if article.status.lower() == "published":
-                all_articles.append(article)
-            elif article.status.lower() == "draft":
-                draft = self.readers.read_file(
-                    base_path=self.path, path=f, content_class=Draft,
-                    context=self.context,
-                    preread_signal=signals.article_generator_preread,
-                    preread_sender=self,
-                    context_signal=signals.article_generator_context,
-                    context_sender=self)
-                all_drafts.append(draft)
-            else:
-                logger.error("Unknown status '%s' for file %s, skipping it.",
-                               article.status, f)
+            self.add_source_path(article_or_draft)
+
 
         self.articles, self.translations = process_translations(all_articles,
                 order_by=self.settings['ARTICLE_ORDER_BY'])
@@ -546,37 +561,10 @@ class ArticlesGenerator(CachingGenerator):
                     self.tags[tag].append(article)
             for author in getattr(article, 'authors', []):
                 self.authors[author].append(article)
-        # sort the articles by date
-        self.articles.sort(key=attrgetter('date'), reverse=True)
+
         self.dates = list(self.articles)
         self.dates.sort(key=attrgetter('date'),
                         reverse=self.context['NEWEST_FIRST_ARCHIVES'])
-
-        # create tag cloud
-        tag_cloud = defaultdict(int)
-        for article in self.articles:
-            for tag in getattr(article, 'tags', []):
-                tag_cloud[tag] += 1
-
-        tag_cloud = sorted(tag_cloud.items(), key=itemgetter(1), reverse=True)
-        tag_cloud = tag_cloud[:self.settings.get('TAG_CLOUD_MAX_ITEMS')]
-
-        tags = list(map(itemgetter(1), tag_cloud))
-        if tags:
-            max_count = max(tags)
-        steps = self.settings.get('TAG_CLOUD_STEPS')
-
-        # calculate word sizes
-        self.tag_cloud = [
-            (
-                tag,
-                int(math.floor(steps - (steps - 1) * math.log(count)
-                    / (math.log(max_count)or 1)))
-            )
-            for tag, count in tag_cloud
-        ]
-        # put words in chaos
-        random.shuffle(self.tag_cloud)
 
         # and generate the output :)
 
@@ -589,7 +577,7 @@ class ArticlesGenerator(CachingGenerator):
         self.authors.sort()
 
         self._update_context(('articles', 'dates', 'tags', 'categories',
-                              'tag_cloud', 'authors', 'related_posts'))
+                              'authors', 'related_posts', 'drafts'))
         self.save_cache()
         self.readers.save_cache()
         signals.article_generator_finalized.send(self)
@@ -636,25 +624,26 @@ class PagesGenerator(CachingGenerator):
                     self._add_failed_source_path(f)
                     continue
 
+                if page.status.lower() == "published":
+                    all_pages.append(page)
+                elif page.status.lower() == "hidden":
+                    hidden_pages.append(page)
+                else:
+                    logger.error("Unknown status '%s' for file %s, skipping it.",
+                                   page.status, f)
+                    self._add_failed_source_path(f)
+                    continue
+
                 self.cache_data(f, page)
 
             self.add_source_path(page)
-
-            if page.status.lower() == "published":
-                all_pages.append(page)
-            elif page.status.lower() == "hidden":
-                hidden_pages.append(page)
-            else:
-                logger.error("Unknown status '%s' for file %s, skipping it.",
-                               page.status, f)
 
         self.pages, self.translations = process_translations(all_pages,
                 order_by=self.settings['PAGE_ORDER_BY'])
         self.hidden_pages, self.hidden_translations = (
             process_translations(hidden_pages))
 
-        self._update_context(('pages', ))
-        self.context['PAGES'] = self.pages
+        self._update_context(('pages', 'hidden_pages'))
 
         self.save_cache()
         self.readers.save_cache()
@@ -668,6 +657,7 @@ class PagesGenerator(CachingGenerator):
                 self.context, page=page,
                 relative_urls=self.settings['RELATIVE_URLS'],
                 override_output=hasattr(page, 'override_save_as'))
+        signals.page_writer_finalized.send(self, writer=writer)
 
 
 class StaticGenerator(Generator):
@@ -684,10 +674,12 @@ class StaticGenerator(Generator):
         for path in paths:
             if final_path:
                 copy(os.path.join(source, path),
-                     os.path.join(output_path, destination, final_path))
+                     os.path.join(output_path, destination, final_path),
+                     self.settings['IGNORE_FILES'])
             else:
                 copy(os.path.join(source, path),
-                     os.path.join(output_path, destination, path))
+                     os.path.join(output_path, destination, path),
+                     self.settings['IGNORE_FILES'])
 
     def generate_context(self):
         self.staticfiles = []

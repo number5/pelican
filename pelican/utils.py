@@ -14,7 +14,6 @@ import shutil
 import sys
 import traceback
 import pickle
-import hashlib
 import datetime
 
 from collections import Hashable
@@ -273,51 +272,73 @@ def slugify(value, substitutions=()):
     return value.decode('ascii')
 
 
-def copy(source, destination):
+def copy(source, destination, ignores=None):
     """Recursively copy source into destination.
 
     If source is a file, destination has to be a file as well.
-
     The function is able to copy either files or directories.
 
     :param source: the source file or directory
     :param destination: the destination file or directory
+    :param ignores: either None, or a list of glob patterns;
+        files matching those patterns will _not_ be copied.
     """
+
+    def walk_error(err):
+        logger.warning("While copying %s: %s: %s",
+                       source_, err.filename, err.strerror)
 
     source_ = os.path.abspath(os.path.expanduser(source))
     destination_ = os.path.abspath(os.path.expanduser(destination))
 
-    if not os.path.exists(destination_) and not os.path.isfile(source_):
-        os.makedirs(destination_)
+    if ignores is None:
+        ignores = []
 
-    def recurse(source, destination):
-        for entry in os.listdir(source):
-            entry_path = os.path.join(source, entry)
-            if os.path.isdir(entry_path):
-                entry_dest = os.path.join(destination, entry)
-                if os.path.exists(entry_dest):
-                    if not os.path.isdir(entry_dest):
-                        raise IOError('Failed to copy {0} a directory.'
-                                      .format(entry_dest))
-                    recurse(entry_path, entry_dest)
-                else:
-                    shutil.copytree(entry_path, entry_dest)
-            else:
-                shutil.copy2(entry_path, destination)
+    if any(fnmatch.fnmatch(os.path.basename(source), ignore)
+           for ignore in ignores):
+        logger.info('Not copying %s due to ignores', source_)
+        return
 
-
-    if os.path.isdir(source_):
-        recurse(source_, destination_)
-
-    elif os.path.isfile(source_):
-        dest_dir = os.path.dirname(destination_)
-        if not os.path.exists(dest_dir):
-            os.makedirs(dest_dir)
-        shutil.copy2(source_, destination_)
+    if os.path.isfile(source_):
+        dst_dir = os.path.dirname(destination_)
+        if not os.path.exists(dst_dir):
+            logger.info('Creating directory %s', dst_dir)
+            os.makedirs(dst_dir)
         logger.info('Copying %s to %s', source_, destination_)
-    else:
-        logger.warning('Skipped copy %s to %s', source_, destination_)
+        shutil.copy2(source_, destination_)
 
+    elif os.path.isdir(source_):
+        if not os.path.exists(destination_):
+            logger.info('Creating directory %s', destination_)
+            os.makedirs(destination_)
+        if not os.path.isdir(destination_):
+            logger.warning('Cannot copy %s (a directory) to %s (a file)',
+                           source_, destination_)
+            return
+
+        for src_dir, subdirs, others in os.walk(source_):
+            dst_dir = os.path.join(destination_,
+                                    os.path.relpath(src_dir, source_))
+
+            subdirs[:] = (s for s in subdirs if not any(fnmatch.fnmatch(s, i)
+                                                        for i in ignores))
+            others[:] =  (o for o in others  if not any(fnmatch.fnmatch(o, i)
+                                                        for i in ignores))
+
+            if not os.path.isdir(dst_dir):
+                logger.info('Creating directory %s', dst_dir)
+                # Parent directories are known to exist, so 'mkdir' suffices.
+                os.mkdir(dst_dir)
+
+            for o in others:
+                src_path = os.path.join(src_dir, o)
+                dst_path = os.path.join(dst_dir, o)
+                if os.path.isfile(src_path):
+                    logger.info('Copying %s to %s', src_path, dst_path)
+                    shutil.copy2(src_path, dst_path)
+                else:
+                    logger.warning('Skipped copy %s (not a file or directory) to %s',
+                                   src_path, dst_path)
 
 def clean_output_dir(path, retention):
     """Remove all files from output directory except those in retention list"""
@@ -520,16 +541,28 @@ def process_translations(content_list, order_by=None):
             try:
                 index.sort(key=order_by)
             except Exception:
-                logger.error('Error sorting with function {}'.format(order_by))
-        elif order_by == 'basename':
-            index.sort(key=lambda x: os.path.basename(x.source_path or ''))
-        elif order_by != 'slug':
-            try:
-                index.sort(key=attrgetter(order_by))
-            except AttributeError:
-                error_msg = ('There is no "{}" attribute in the item metadata.'
-                             'Defaulting to slug order.')
-                logger.warning(error_msg.format(order_by))
+                logger.error('Error sorting with function %s', order_by)
+        elif isinstance(order_by, six.string_types):
+            if order_by.startswith('reversed-'):
+                order_reversed = True
+                order_by = order_by.replace('reversed-', '', 1)
+            else:
+                order_reversed = False
+
+            if order_by == 'basename':
+                index.sort(key=lambda x: os.path.basename(x.source_path or ''),
+                           reverse=order_reversed)
+            # already sorted by slug, no need to sort again
+            elif not (order_by == 'slug' and not order_reversed):
+                try:
+                    index.sort(key=attrgetter(order_by),
+                               reverse=order_reversed)
+                except AttributeError:
+                    logger.warning('There is no "%s" attribute in the item '
+                        'metadata. Defaulting to slug order.', order_by)
+        else:
+            logger.warning('Invalid *_ORDER_BY setting (%s).'
+                'Valid options are strings and functions.', order_by)
 
     return index, translations
 
@@ -543,7 +576,7 @@ def folder_watcher(path, extensions, ignores=[]):
     def file_times(path):
         '''Return `mtime` for each file in path'''
 
-        for root, dirs, files in os.walk(path):
+        for root, dirs, files in os.walk(path, followlinks=True):
             dirs[:] = [x for x in dirs if not x.startswith(os.curdir)]
 
             for f in files:
@@ -627,129 +660,6 @@ def split_all(path):
     return components
 
 
-class FileDataCacher(object):
-    '''Class that can cache data contained in files'''
-
-    def __init__(self, settings, cache_name, caching_policy, load_policy):
-        '''Load the specified cache within CACHE_PATH in settings
-
-        only if *load_policy* is True,
-        May use gzip if GZIP_CACHE ins settings is True.
-        Sets caching policy according to *caching_policy*.
-        '''
-        self.settings = settings
-        self._cache_path = os.path.join(self.settings['CACHE_PATH'],
-                                        cache_name)
-        self._cache_data_policy = caching_policy
-        if self.settings['GZIP_CACHE']:
-            import gzip
-            self._cache_open = gzip.open
-        else:
-            self._cache_open = open
-        if load_policy:
-            try:
-                with self._cache_open(self._cache_path, 'rb') as fhandle:
-                    self._cache = pickle.load(fhandle)
-            except (IOError, OSError) as err:
-                logger.debug('Cannot load cache %s (this is normal on first '
-                    'run). Proceeding with empty cache.\n%s',
-                        self._cache_path, err)
-                self._cache = {}
-            except Exception as err:
-                logger.warning(('Cannot unpickle cache %s, cache may be using '
-                    'an incompatible protocol (see pelican caching docs). '
-                    'Proceeding with empty cache.\n%s'),
-                        self._cache_path, err)
-                self._cache = {}
-        else:
-            self._cache = {}
-
-    def cache_data(self, filename, data):
-        '''Cache data for given file'''
-        if self._cache_data_policy:
-            self._cache[filename] = data
-
-    def get_cached_data(self, filename, default=None):
-        '''Get cached data for the given file
-
-        if no data is cached, return the default object
-        '''
-        return self._cache.get(filename, default)
-
-    def save_cache(self):
-        '''Save the updated cache'''
-        if self._cache_data_policy:
-            try:
-                mkdir_p(self.settings['CACHE_PATH'])
-                with self._cache_open(self._cache_path, 'wb') as fhandle:
-                    pickle.dump(self._cache, fhandle)
-            except (IOError, OSError, pickle.PicklingError) as err:
-                logger.warning('Could not save cache %s\n ... %s',
-                    self._cache_path, err)
-
-
-class FileStampDataCacher(FileDataCacher):
-    '''Subclass that also caches the stamp of the file'''
-
-    def __init__(self, settings, cache_name, caching_policy, load_policy):
-        '''This sublcass additionally sets filestamp function
-        and base path for filestamping operations
-        '''
-        super(FileStampDataCacher, self).__init__(settings, cache_name,
-                                                  caching_policy,
-                                                  load_policy)
-
-        method = self.settings['CHECK_MODIFIED_METHOD']
-        if method == 'mtime':
-            self._filestamp_func = os.path.getmtime
-        else:
-            try:
-                hash_func = getattr(hashlib, method)
-                def filestamp_func(filename):
-                    '''return hash of file contents'''
-                    with open(filename, 'rb') as fhandle:
-                        return hash_func(fhandle.read()).digest()
-                self._filestamp_func = filestamp_func
-            except AttributeError as err:
-                logger.warning('Could not get hashing function\n\t%s', err)
-                self._filestamp_func = None
-
-    def cache_data(self, filename, data):
-        '''Cache stamp and data for the given file'''
-        stamp = self._get_file_stamp(filename)
-        super(FileStampDataCacher, self).cache_data(filename, (stamp, data))
-
-    def _get_file_stamp(self, filename):
-        '''Check if the given file has been modified
-        since the previous build.
-
-        depending on CHECK_MODIFIED_METHOD
-        a float may be returned for 'mtime',
-        a hash for a function name in the hashlib module
-        or an empty bytes string otherwise
-        '''
-        try:
-            return self._filestamp_func(filename)
-        except (IOError, OSError, TypeError) as err:
-            logger.warning('Cannot get modification stamp for %s\n\t%s',
-                filename, err)
-            return b''
-
-    def get_cached_data(self, filename, default=None):
-        '''Get the cached data for the given filename
-        if the file has not been modified.
-
-        If no record exists or file has been modified, return default.
-        Modification is checked by comparing the cached
-        and current file stamp.
-        '''
-        stamp, data = super(FileStampDataCacher, self).get_cached_data(
-            filename, (None, default))
-        if stamp != self._get_file_stamp(filename):
-            return default
-        return data
-
-
 def is_selected_for_writing(settings, path):
     '''Check whether path is selected for writing
     according to the WRITE_SELECTED list
@@ -767,3 +677,19 @@ def path_to_file_url(path):
     '''Convert file-system path to file:// URL'''
     return six.moves.urllib_parse.urljoin(
         "file://", six.moves.urllib.request.pathname2url(path))
+
+
+def maybe_pluralize(count, singular, plural):
+    '''
+    Returns a formatted string containing count and plural if count is not 1
+    Returns count and singular if count is 1
+
+    maybe_pluralize(0, 'Article', 'Articles') -> '0 Articles'
+    maybe_pluralize(1, 'Article', 'Articles') -> '1 Article'
+    maybe_pluralize(2, 'Article', 'Articles') -> '2 Articles'
+
+    '''
+    selection = plural
+    if count == 1:
+        selection = singular
+    return '{} {}'.format(count, selection)

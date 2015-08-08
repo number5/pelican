@@ -6,7 +6,9 @@ clean =
     rm -rf *egg-info build dist
 tests = python -m unittest discover
 publish = python setup.py sdist bdist_wheel register upload
-files = README.rst
+files =
+    README.rst
+    setup.py
 
 [bump]
 unsuffix = true
@@ -27,4 +29,4 @@ prepare = Next release
 url = http://docs.getpelican.com/{tag}
 
 [commands]
-bump = sed -i "" "s/last_stable\s*=.*/last_stable = '{version}'/" docs/conf.py
+bump = sed -i "" "s/last_stable[[:space:]]*=.*/last_stable = '{version}'/" docs/conf.py
